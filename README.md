@@ -31,3 +31,12 @@ A result that looked good: median luma about 0.54, about 24% of pixels above 0.7
 
 ## License
 MIT
+
+## Example: cartoon rider (`cartoon_rider/`)
+A procedural cartoon remake of a "rider going down a sunny grass slope toward a cliff city" shot, used to test the HDR look on non-AI footage. Needs only numpy and Pillow.
+```bash
+python3 cartoon_rider/render.py sdr.mp4            # 1080p60, 7 s SDR master (~4 min on 4 cores)
+python3 cartoon_rider/render.py prev --preview 0 3 # PNG stills only
+CURVE="0/0 0.25/0.10 0.5/0.26 0.75/0.52 0.9/0.80 1/1" bash grade_hlg.sh sdr.mp4 examples/cartoon_rider_hlg.mp4
+```
+The SDR white point maps to the HLG peak, so the scene keeps pure white for only small areas (cloud tops, the T-shirt, the backlit grass rim) and keeps the sky a deeper blue. Result: median 0.49, 15.7% above 0.75, 8.6% above 0.9. For comparison, the AI reference clip measured median 0.40, 8.5% above 0.75, 2.7% above 0.9.
