@@ -21,6 +21,8 @@ python3 ystat.py out.mp4
 ```
 Needs ffmpeg built with zscale (libzimg), and Python with numpy.
 
+Curve points act on linear light, not SDR code values: an SDR code value of 0.5 is about 0.26 in linear light, and SDR white maps to the HLG peak. Untagged inputs are treated as BT.709 limited range.
+
 A result that looked good: median luma about 0.54, about 24% of pixels above 0.75. A median under 0.4 looked too dark. Avoid crushing the mids (like `0.45/0.08`).
 
 ## Scene tips
@@ -40,3 +42,10 @@ python3 cartoon_rider/render.py prev --preview 0 3 # PNG stills only
 CURVE="0/0 0.25/0.10 0.5/0.26 0.75/0.52 0.9/0.80 1/1" bash grade_hlg.sh sdr.mp4 examples/cartoon_rider_hlg.mp4
 ```
 The SDR white point maps to the HLG peak, so the scene keeps pure white for only small areas (cloud tops, the T-shirt, the backlit grass rim) and keeps the sky a deeper blue. Result: median 0.49, 15.7% above 0.75, 8.6% above 0.9. For comparison, the AI reference clip measured median 0.40, 8.5% above 0.75, 2.7% above 0.9.
+
+## Example: bright, pale live-action clip
+A 37 s, 854x480 clip with large pale grey backgrounds (SDR median 0.64). The default curve left the median at 0.75 and 51% of pixels above 0.75. This curve pulls the background down so only the moon and the white liquid reach the peak:
+```bash
+CURVE="0/0 0.1/0.03 0.4/0.09 0.7/0.26 0.9/0.66 1/1" bash grade_hlg.sh in.mp4 out.mp4
+```
+Result: median 0.59, 15.9% above 0.75, 5.6% above 0.9.
