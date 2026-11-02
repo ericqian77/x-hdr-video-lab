@@ -49,3 +49,11 @@ A 37 s, 854x480 clip with large pale grey backgrounds (SDR median 0.64). The def
 CURVE="0/0 0.1/0.03 0.4/0.09 0.7/0.26 0.9/0.66 1/1" bash grade_hlg.sh in.mp4 out.mp4
 ```
 Result: median 0.59, 15.9% above 0.75, 5.6% above 0.9.
+
+## HDR profile picture (`pfp_hdr.py`)
+Makes a 400 × 400, 256-colour Rec.2100 PQ PNG for an X avatar. The PNG carries a cICP chunk (9/16/0/1), a PQ ICC profile built by the script, and one transparent pixel at (0,0). This follows the format xhdr.app reports as keeping HDR on X. Upload it from x.com in a desktop browser, and don't zoom or move it in the crop dialog.
+```bash
+python3 pfp_hdr.py photo.png xhdr-pfp.png                       # centre square crop
+python3 pfp_hdr.py screenshot.png xhdr-pfp.png --circle CX CY R  # cut the circle out of a profile screenshot
+```
+The grade keeps hue, puts the SDR level at 1.4 × 203 nits, and pushes near-white, low-colour pixels toward `--white` nits. Bright, colourful pixels that aren't skin are lifted up to `1 + --pop` times. Warm hues (skin, lips, hair) don't get the lift. On a cartoon avatar with a pale blue background, this gave a background of about 1,500 nits, a face of 160 nits, and sparkles near 1,900 nits. The script also writes `_16bit.png` (full-precision PQ), `_sdr.png` and `_preview.png` (original next to a nits heat map).
