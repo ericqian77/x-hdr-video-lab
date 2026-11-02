@@ -74,3 +74,14 @@ python3 grade_pop.py in.mp4 out.mp4 --hue 20 75 --pop 3      # golden / orange l
 python3 grade_pop.py in.mp4 out.mp4 --mask mask.mp4          # also write the lift mask for checking
 ```
 Example: a 7 s vertical clip of golden ginkgo trees under a pale cyan sky. The sky (linear 0.82) was brighter than the clouds (0.72). Every curve sent the sky to peak first. With `--hue 20 75 --pop 3`, the yellow canopy and fallen leaves became the highlight (22% above HLG 0.75), and the sky stayed at SDR level.
+
+## Example: animating a still (`starry_train/animate.py`)
+Turns one illustration (a night sky with clouds and a steam train at a country station) into a seamless HDR loop. Every motion is periodic in the loop length: twinkling stars, a pulsing four-point star, shooting stars, lightning in the right cloud bank, a flickering headlight and station windows, and swaying foreground grass with the tracks held still. The scene stays at SDR level (median about 9 nits; it is night). Lit cloud tops get up to 1.7×, and points of light reach about 1000 nits. The script writes HLG directly with the same tags as `grade_hlg.sh` and renders on all cores (20 s at 1080x1920/30 fps in about 2 minutes on 4 cores).
+```bash
+python3 starry_train/animate.py still.jpg loop.mp4 --seconds 20
+python3 starry_train/animate.py still.jpg prev --preview 0 5   # SDR stills + nits stats
+# longer version: re-encode the loop once, then repeat it without re-encoding
+ffmpeg -i loop.mp4 -c:v libx264 -b:v 5M -g 60 -color_primaries bt2020 -color_trc arib-std-b67 -colorspace bt2020nc \
+  -x264-params colorprim=bt2020:transfer=arib-std-b67:colormatrix=bt2020nc loop5m.mp4
+ffmpeg -stream_loop 29 -i loop5m.mp4 -c copy long.mp4          # 30 x 20 s = 10 min
+```
