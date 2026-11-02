@@ -80,6 +80,10 @@ Turns one illustration (a night sky with clouds and a steam train at a country s
 ```bash
 python3 starry_train/animate.py still.jpg loop.mp4 --seconds 20
 python3 starry_train/animate.py still.jpg prev --preview 0 5   # SDR stills + nits stats
+python3 starry_train/animate.py still.jpg loop.mp4 --train     # the train rushes at the camera, a new one arrives
+# --train: the train is cut out (the hole is filled from the open sky and field beside it, and the rails
+# are extended to the horizon). It leaves at 6 s, rushes at the camera with motion blur, a growing
+# headlight, shake and gusting grass. A new train rolls in from the horizon and stops at 20 s, so the loop stays seamless.
 # longer version: re-encode the loop once, then repeat it without re-encoding
 ffmpeg -i loop.mp4 -c:v libx264 -b:v 5M -g 60 -color_primaries bt2020 -color_trc arib-std-b67 -colorspace bt2020nc \
   -x264-params colorprim=bt2020:transfer=arib-std-b67:colormatrix=bt2020nc loop5m.mp4

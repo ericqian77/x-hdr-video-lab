@@ -77,6 +77,82 @@ def add(dst, sprite, cx, cy, colour, amount):
     dst[ya:yb, xa:xb] += s[..., None] * (np.array(colour, np.float32) * amount)
 
 
+# Train outline, wheel base and horizon, in frame coordinates (1080x1920).
+TRAIN_POLY = [(358, 1384), (474, 1329), (526, 1303), (561, 1301), (567, 1324), (606, 1338), (615, 1345),
+              (615, 1456), (592, 1471), (588, 1499), (510, 1499), (503, 1479), (480, 1476), (358, 1432)]
+ANCHOR = (552.0, 1498.0)      # bottom centre of the locomotive, on the tracks
+HORIZON = 1413.0
+LAMP_REL = (-2.0, -168.0)     # headlight relative to ANCHOR at scale 1
+
+
+def cut_train(srgb):
+    """Remove the train from the still. Returns (filled background, RGBA sprite in sRGB with its origin)."""
+    from PIL import ImageDraw
+    m = Image.new('L', (W, H), 0)
+    ImageDraw.Draw(m).polygon(TRAIN_POLY, fill=255)
+    hard = np.asarray(m).astype(np.float32) / 255
+    soft = np.clip(blur(hard, 1.5) * 1.15, 0, 1)
+    # fill: the same rows 260 px to the right (open sky, horizon and grass), mirrored for a clean seam
+    fill = srgb.copy()
+    ys, xs = np.nonzero(blur(hard, 3) > 0.01)
+    x0, x1 = xs.min(), xs.max()
+    for x in range(x0, x1 + 1):
+        fill[:, x] = srgb[:, x1 + 1 + (x1 - x)]
+    # rails continue to the horizon where the locomotive stood
+    from PIL import ImageDraw as D
+    rails = Image.new('L', (W, H), 0); d = D.Draw(rails)
+    for xb in (521, 589):
+        d.line([(xb, ANCHOR[1] + 4), (553 + (xb - 553) * 0.12, HORIZON + 2)], fill=255, width=3)
+    r = blur(np.asarray(rails).astype(np.float32) / 255, 0.7)[..., None] * blur(hard, 3)[..., None]
+    fill = fill * (1 - r) + np.array([0.34, 0.27, 0.22], np.float32) * r
+    out = srgb * (1 - soft[..., None]) + fill * soft[..., None]
+    ys, xs = np.nonzero(hard > 0)
+    bx0, bx1, by0, by1 = xs.min() - 3, xs.max() + 4, ys.min() - 3, ys.max() + 4
+    spr = np.dstack([srgb[by0:by1, bx0:bx1], np.clip(blur(hard, 0.8), 0, 1)[by0:by1, bx0:bx1]])
+    return out, (spr, bx0, by0)
+
+
+def train_state(t, T):
+    """Scale (1 = parked at the station) and fade of the train at time t; None when no train is visible."""
+    t %= T
+    d0, d1 = 0.30 * T, 0.43 * T            # departure toward the camera
+    a0 = 0.70 * T                          # a new train arrives from the horizon and stops at T
+    if t < d0:
+        return 1.0, 1.0, 0.0
+    if t < d1:
+        u = (t - d0) / (d1 - d0)
+        z = 1 - 0.93 * u ** 1.7
+        return 1 / z, 1.0 - smoothstep(0.975, 1.0, u), u
+    if t < a0:
+        return None
+    u = (t - a0) / (T - a0)
+    z = 1 + 9 * (1 - u) ** 2
+    return 1 / z, smoothstep(0.0, 0.08, u), 0.0
+
+
+def place_train(nits, sprite_lin, alpha, sc, fade):
+    """Composite the sprite (linear nits, alpha) scaled by sc with its wheels on the track."""
+    spr, bx0, by0 = sprite_lin
+    h, w = spr.shape[:2]
+    nw, nh = max(2, int(round(w * sc))), max(2, int(round(h * sc)))
+    if nw > 6 * W:
+        return
+    ax, ay = ANCHOR
+    by = HORIZON + (ay - HORIZON) * sc          # wheels follow the ground plane
+    ox = ax + (bx0 - ax) * sc
+    oy = by + (by0 - ay) * sc
+    rs = lambda ch: np.asarray(Image.fromarray(ch, 'F').resize((nw, nh), Image.BILINEAR))
+    rgb = np.dstack([rs(spr[..., c]) for c in range(3)])
+    al = rs(alpha) * fade
+    x0, y0 = int(round(ox)), int(round(oy))
+    xa, ya, xb, yb = max(x0, 0), max(y0, 0), min(x0 + nw, W), min(y0 + nh, H)
+    if xa >= xb or ya >= yb:
+        return
+    sub = (slice(ya - y0, yb - y0), slice(xa - x0, xb - x0))
+    A = al[sub][..., None]
+    nits[ya:yb, xa:xb] = nits[ya:yb, xa:xb] * (1 - A) + rgb[sub] * A
+
+
 _RENDER = None
 
 
@@ -95,11 +171,14 @@ def main():
     ap.add_argument('--seconds', type=float, default=20)
     ap.add_argument('--fps', type=int, default=30)
     ap.add_argument('--preview', type=float, nargs='*')
+    ap.add_argument('--train', action='store_true', help='train departs toward the camera and a new one arrives')
     a = ap.parse_args()
     T = a.seconds
 
     srgb, s, top = load(a.src)
     P = lambda x, y: (x * s, y * s - top)          # source-image coordinates -> frame
+    if a.train:
+        srgb, sprite = cut_train(srgb)
     lin = srgb_to_linear(srgb) @ M709_TO_2020.T.astype(np.float32)
     Y = lin @ LUMA
     yy, xx = np.mgrid[0:H, 0:W].astype(np.float32)
@@ -131,6 +210,10 @@ def main():
 
     star_xy = P(565, 605)
     lamp_xy = P(570, 1383)
+    if a.train:
+        spr, sbx, sby = sprite
+        spr_lin = srgb_to_linear(spr[..., :3]) @ M709_TO_2020.T.astype(np.float32) * SDR_WHITE
+        train_sprite = ((spr_lin.astype(np.float32), sbx, sby), spr[..., 3].astype(np.float32))
     cross = np.zeros((161, 161), np.float32)
     c = 80
     cross[c, :] = np.exp(-np.abs(np.arange(161) - c) / 26)
@@ -148,7 +231,10 @@ def main():
     def frame(t):
         k = 2 * math.pi * t / T
         # grass sway (bilinear-free nearest remap is enough at this amplitude)
-        dx = amp * np.sin(2 * k + xx * 0.012 + yy * 0.018) + amp * 0.4 * np.sin(5 * k + yy * 0.05)
+        st = train_state(t, T) if a.train else (1.0, 1.0, 0.0)
+        rush = 0.0 if st is None else smoothstep(0.35, 1.0, st[2])      # 0..1 while the train rushes past
+        dx = (amp * (1 + 3 * rush) * np.sin(2 * k + xx * 0.012 + yy * 0.018)
+              + amp * 0.4 * np.sin(5 * k + yy * 0.05))
         sx = np.clip(np.rint(xx + dx), 0, W - 1).astype(np.int32)
         src = lin_rgb[yy.astype(np.int32), sx]
         gain = base_gain[yy.astype(np.int32), sx]
@@ -162,8 +248,35 @@ def main():
         # windows and headlight flicker
         fl = 1 + 0.08 * math.sin(3 * k) + 0.05 * math.sin(11 * k)
         nits += (warm_win * 250 * (fl - 0.9))[..., None] * np.array([1.0, 0.75, 0.4], np.float32)
-        add(nits, lamp, *lamp_xy, (1.0, 0.85, 0.6), 520 * fl)
-        add(nits, halo, *lamp_xy, (1.0, 0.95, 0.85), 900 * fl)
+        if not a.train:
+            add(nits, lamp, *lamp_xy, (1.0, 0.85, 0.6), 520 * fl)
+            add(nits, halo, *lamp_xy, (1.0, 0.95, 0.85), 900 * fl)
+        elif st is not None:
+            sc, fade, _ = st
+            # motion blur: average a few positions across half a frame while moving fast
+            nxt = train_state(t + 0.5 / a.fps, T)
+            sc2 = nxt[0] if nxt is not None else sc
+            samples = 1 if abs(sc2 - sc) < 0.01 * sc else 6
+            acc = np.zeros_like(nits)
+            for j in range(samples):
+                sj = sc + (sc2 - sc) * j / max(samples - 1, 1)
+                layer = nits.copy()
+                place_train(layer, *train_sprite, sj, fade)
+                acc += layer
+            nits = acc / samples
+            lx = ANCHOR[0] + LAMP_REL[0] * sc
+            ly = HORIZON + (ANCHOR[1] - HORIZON) * sc + LAMP_REL[1] * sc
+            gr = min(sc, 9.0)
+            big = glow_sprite(int(min(120 * gr, 900)), 18 * gr)
+            add(nits, big, lx, ly, (1.0, 0.85, 0.6), 520 * fl * fade * gr ** 0.6)
+            add(nits, glow_sprite(int(min(80 * gr, 700)), 10 * gr), lx, ly, (1.0, 0.95, 0.85), 900 * fl * fade)
+        if a.train and st is not None and st[2] > 0:
+            u = st[2]
+            wash = math.exp(-((1 - u) * 12) ** 2)                         # warm light as it passes the camera
+            nits += np.array([60, 48, 32], np.float32) * wash
+            sh = int(round(10 * rush * math.sin(t * 61)))
+            sv = int(round(7 * rush * math.sin(t * 47 + 1)))
+            nits = np.pad(nits, ((12, 12), (12, 12), (0, 0)), mode='edge')[12 - sv:12 - sv + H, 12 - sh:12 - sh + W]
         # the four-point star: pulsing core and spikes
         pulse = 1 + 0.35 * math.sin(k * 3)
         add(nits, cross, *star_xy, (0.75, 0.88, 1.0), 380 * pulse)
