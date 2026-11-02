@@ -66,3 +66,11 @@ A 90 s, 720x1280 animation of white cranes over teal water, golden reeds and an 
 CURVE="0/0 0.1/0.035 0.3/0.14 0.55/0.38 0.75/0.82 1/1" bash grade_hlg.sh in.mp4 out.mp4
 ```
 Result: 1080x1920, median 0.54, 8.5% above 0.75, 0.6% above 0.9 (the cranes and their reflections).
+
+## Colour-targeted grade (`grade_pop.py`)
+A global curve lifts every bright pixel, so a pale sky clips to white before the subject glows. `grade_pop.py` instead gives each pixel one gain, so hue is kept. Pixels inside a hue band that are colourful and not dark get lifted up to `1 + --pop`. Near-white, low-colour pixels rise toward `--white` nits, and everything else stays at `--base` × SDR level. It writes HLG directly (BT.2100 inverse OOTF and OETF, 1000-nit reference), with the same H.264 tags as `grade_hlg.sh`.
+```bash
+python3 grade_pop.py in.mp4 out.mp4 --hue 20 75 --pop 3      # golden / orange leaves
+python3 grade_pop.py in.mp4 out.mp4 --mask mask.mp4          # also write the lift mask for checking
+```
+Example: a 7 s vertical clip of golden ginkgo trees under a pale cyan sky. The sky (linear 0.82) was brighter than the clouds (0.72). Every curve sent the sky to peak first. With `--hue 20 75 --pop 3`, the yellow canopy and fallen leaves became the highlight (22% above HLG 0.75), and the sky stayed at SDR level.
