@@ -95,3 +95,10 @@ Example: a 10 s vertical clip of a flower-lined canal, with vivid yellow, magent
 python3 grade_pop.py in.mp4 out.mp4 --hue 270 55 --pop 4 --level 0.15 0.45 --base 1.0 --white 400
 ```
 The hue band wraps from purple through magenta and red to yellow. It stops at 55° so sunlit yellow-green leaves are left out. A lower `--level` lets the mid-bright magenta flower wall in, which a 0.3–0.7 gate had missed. Sky, foliage and the white mist stay at SDR level. Result: p99 about 650 nits, 13% of pixels above HLG 0.75.
+
+## Holographic card loop (`holo_card.py`)
+Turns one image into a 6 s seamless loop of a card held in the hand and tilted left and right (3D perspective, about ±14° yaw plus a little pitch). The artwork stays at SDR level. The HDR highlights are a narrow white specular band (`--sheen`, 550 nits by default) with a faint rainbow foil edge sweeping across the card, and about 2,200 glitter points, each flashing at its own angle. Rounded corners, a soft shadow and a near-black ground set the highlights off.
+```bash
+python3 holo_card.py card.jpg out.mp4                 # 1080x1920, 30 fps, HLG
+python3 holo_card.py card.jpg prev --preview 0 0.75   # SDR stills + nits stats
+```
