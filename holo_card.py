@@ -3,7 +3,10 @@
 The card rotates in 3D (yaw about +-14 degrees, a little pitch), so it reads as a card held in
 the hand. As it turns, a white specular band and a rainbow foil sheen sweep across it, and glitter
 points flash, each at its own angle. The artwork stays at SDR level; the sheen and glitter are the
-HDR highlights, on a near-black background. Motion is periodic, so the clip loops without a seam.
+HDR highlights, on a near-black background.
+Default style 'glow': no stripe. A wide, soft light lobe multiplies the artwork's own colours as the card
+turns toward the light, so saturated colours glow and stay their colour; the bright grain of the texture
+shimmers inside the lobe, with sparse glitter. Style 'band' keeps the specular stripe and rainbow foil. Motion is periodic, so the clip loops without a seam.
 Output: HLG BT.2020, H.264 High 8-bit, 1080x1920.
 
     python3 holo_card.py card.jpg out.mp4 [--seconds 6] [--fps 30] [--preview T ...]
@@ -65,6 +68,10 @@ def main():
     ap.add_argument('--seconds', type=float, default=6)
     ap.add_argument('--fps', type=int, default=30)
     ap.add_argument('--sheen', type=float, default=550, help='peak nits of the specular band')
+    ap.add_argument('--style', choices=['glow', 'band'], default='glow',
+                    help='glow: the art lights up under a soft lobe (default); band: specular stripe + foil')
+    ap.add_argument('--glow', type=float, default=2.8, help='extra gain at the centre of the light lobe')
+    ap.add_argument('--grain', type=float, default=1.5, help='extra gain on the bright texture grain inside the lobe')
     ap.add_argument('--preview', type=float, nargs='*')
     a = ap.parse_args()
     T = a.seconds
@@ -79,8 +86,11 @@ def main():
     vv, uu = np.mgrid[0:CH, 0:CW].astype(np.float32)
     u, v = uu / CW, vv / CH
     diag = 0.72 * u + 0.28 * v                                       # sheen runs across this axis
+    lt = Image.fromarray((np.clip(tex, 0, 1) * 255).astype(np.uint8))
+    hp = tex - np.asarray(lt.filter(ImageFilter.GaussianBlur(3))).astype(np.float32) / 255
+    grain = np.clip(hp / 0.06, 0, 1)                                  # bright specks of the fuzzy texture
     rng = np.random.default_rng(3)
-    n = 2200
+    n = 2200 if a.style == 'band' else 900
     gx, gy = rng.integers(2, CW - 2, n), rng.integers(2, CH - 2, n)
     gang = rng.uniform(-1, 1, n).astype(np.float32)                   # angle (in units of YAW) where each flashes
     gcol = hsv_rainbow(rng.random(n)).astype(np.float32) * 0.5 + 0.5
@@ -93,15 +103,25 @@ def main():
         ph = 2 * math.pi * tt / T
         q = math.sin(ph)                                              # -1..1, tilt
         yaw, pitch = YAW * q, PITCH * math.sin(ph + math.pi / 2)
-        # surface: art + rainbow foil + specular band + glitter
-        c = 0.5 - 0.55 * q                                            # band centre sweeps across the card
-        band = np.exp(-((diag - c) / 0.045) ** 2)
-        broad = np.exp(-((diag - c) / 0.13) ** 2)
-        foil = hsv_rainbow((diag * 2.2 + q * 0.8 + 0.15 * tex) % 1.0)
-        card = base * (1 + 0.15 * q * (u - 0.5))[..., None]                     # a touch of light falloff
-        card = card + foil * (45 * broad * (0.5 + 0.8 * tex))[..., None]
-        card = card + (a.sheen * band * (0.55 + 0.45 * tex))[..., None]
-        g = np.exp(-((q - gang) / 0.05) ** 2) * 1400
+        if a.style == 'band':
+            # art + rainbow foil + a narrow specular band + glitter
+            c = 0.5 - 0.55 * q
+            band = np.exp(-((diag - c) / 0.045) ** 2)
+            broad = np.exp(-((diag - c) / 0.13) ** 2)
+            foil = hsv_rainbow((diag * 2.2 + q * 0.8 + 0.15 * tex) % 1.0)
+            card = base * (1 + 0.15 * q * (u - 0.5))[..., None]
+            card = card + foil * (45 * broad * (0.5 + 0.8 * tex))[..., None]
+            card = card + (a.sheen * band * (0.55 + 0.45 * tex))[..., None]
+            g = np.exp(-((q - gang) / 0.05) ** 2) * 1400
+        else:
+            # the art itself catches the light: a wide soft lobe multiplies the colours (no white bar),
+            # the fuzzy texture's bright grain shimmers inside it, and a little glitter
+            cu, cv = 0.5 - 0.85 * q, 0.42 + 0.12 * math.sin(ph + math.pi / 2)
+            lobe = np.exp(-(((u - cu) / 0.36) ** 2 + ((v - cv) / 0.7) ** 2))
+            gain = 1 + a.glow * lobe + a.grain * lobe * grain
+            card = base * gain[..., None]
+            card = card + (14 * lobe ** 2)[..., None]                     # faint gloss, barely there
+            g = np.exp(-((q - gang) / 0.05) ** 2) * 650 * lobe[gy, gx]
         for dy in (-1, 0, 1):
             for dx in (-1, 0, 1):
                 w = 1.0 if dx == 0 and dy == 0 else 0.35
