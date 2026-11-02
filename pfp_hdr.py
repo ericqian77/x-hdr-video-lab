@@ -113,10 +113,11 @@ def make_pq_icc():
     ratio = (brad @ d50) / (brad @ W)
     chad = np.linalg.inv(brad) @ np.diag(ratio) @ brad
     M50 = chad @ M
-    # TRC: PQ code -> relative linear with 203 nits = 1.0 (clipped), so colour-managed
-    # SDR viewers see the SDR-level picture and clip the HDR highlights.
+    # TRC: the full PQ EOTF, normalised to 10,000 nits, never clipped. X strips the PNG's
+    # cICP chunk and keeps only this ICC profile, so the curve must carry the highlights:
+    # a curve clipped at SDR white (203 nits) made the glow appear only some of the time.
     n = 4096
-    lin = np.clip(pq_decode(np.linspace(0, 1, n)) / SDR_WHITE, 0, 1)
+    lin = np.clip(pq_decode(np.linspace(0, 1, n)) / 10000.0, 0, 1)
     curv = b'curv' + b'\0' * 4 + struct.pack('>I', n) + (np.round(lin * 65535).astype('>u2')).tobytes()
     tags = [
         (b'desc', _mluc('Rec.2100 PQ (x-hdr-video-lab)')),
