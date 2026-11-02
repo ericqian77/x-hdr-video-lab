@@ -9,7 +9,8 @@ Here one gain per pixel (hue kept) is computed from its colour:
 Output: HLG BT.2020 (1000-nit reference), H.264 High 8-bit, tagged in container and stream,
 long side scaled to 1920, audio copied as AAC.
 
-    python3 grade_pop.py in.mp4 out.mp4 [--hue 20 75] [--pop 3] [--base 1.1] [--white 600]
+    python3 grade_pop.py in.mp4 out.mp4 [--hue 20 75] [--pop 3] [--base 1.1] [--white 600] [--level 0.05 0.25]
+The hue band may wrap past 360, e.g. --hue 270 70 covers purple, magenta, red, orange and yellow.
 """
 import argparse
 import json
@@ -50,7 +51,7 @@ def grade_frame(code709, a):
     Y = lin @ LUMA
     mx = lin.max(-1)
     colourful = (mx - lin.min(-1)) / np.maximum(mx, 1e-6)
-    w = band(hue_deg(lin709), *a.hue) * smoothstep(0.35, 0.6, colourful) * smoothstep(0.05, 0.25, mx)
+    w = band(hue_deg(lin709), *a.hue) * smoothstep(0.35, 0.6, colourful) * smoothstep(*a.level, mx)
     hl = smoothstep(0.8, 1.0, Y) * (1 - smoothstep(0.1, 0.3, colourful))
     gain = a.base * np.maximum(1 + a.pop * w, 1 + (a.white / (SDR_WHITE * a.base) - 1) * hl)
     return lin * SDR_WHITE * gain[..., None], w
@@ -75,6 +76,8 @@ def main():
     ap.add_argument('--pop', type=float, default=3.0)
     ap.add_argument('--base', type=float, default=1.1)
     ap.add_argument('--white', type=float, default=600)
+    ap.add_argument('--level', type=float, nargs=2, default=[0.05, 0.25], metavar=('LO', 'HI'),
+                    help='brightness (max channel, linear) where the lift fades in')
     ap.add_argument('--mask', help='also write an SDR preview of the pop mask to this mp4')
     a = ap.parse_args()
 

@@ -89,3 +89,9 @@ ffmpeg -i loop.mp4 -c:v libx264 -b:v 5M -g 60 -color_primaries bt2020 -color_trc
   -x264-params colorprim=bt2020:transfer=arib-std-b67:colormatrix=bt2020nc loop5m.mp4
 ffmpeg -stream_loop 29 -i loop5m.mp4 -c copy long.mp4          # 30 x 20 s = 10 min
 ```
+
+Example: a 10 s vertical clip of a flower-lined canal, with vivid yellow, magenta, pink and red chrysanthemums, blue sky, green trees and white mist.
+```bash
+python3 grade_pop.py in.mp4 out.mp4 --hue 270 55 --pop 4 --level 0.15 0.45 --base 1.0 --white 400
+```
+The hue band wraps from purple through magenta and red to yellow. It stops at 55° so sunlit yellow-green leaves are left out. A lower `--level` lets the mid-bright magenta flower wall in, which a 0.3–0.7 gate had missed. Sky, foliage and the white mist stay at SDR level. Result: p99 about 650 nits, 13% of pixels above HLG 0.75.
