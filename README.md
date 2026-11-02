@@ -19,7 +19,7 @@ PRE="eq=brightness=0.03," CURVE="0/0 0.32/0.28 0.55/0.60 0.78/0.82 1/1" bash gra
 ffprobe -v error -select_streams v:0 -show_entries stream=color_space,color_transfer,color_primaries -of default=nw=1 out.mp4
 python3 ystat.py out.mp4
 ```
-Needs ffmpeg built with zscale (libzimg), and Python with numpy.
+The output keeps the input's aspect ratio, with the long side at 1920 (so 1920x1080 or 1080x1920). Needs ffmpeg built with zscale (libzimg), and Python with numpy.
 
 Curve points act on linear light, not SDR code values: an SDR code value of 0.5 is about 0.26 in linear light, and SDR white maps to the HLG peak. Untagged inputs are treated as BT.709 limited range.
 
@@ -59,3 +59,10 @@ python3 pfp_hdr.py screenshot.png xhdr-pfp.png --circle CX CY R  # cut the circl
 The grade keeps hue, puts the SDR level at 1.4 × 203 nits, and pushes near-white, low-colour pixels toward `--white` nits. Bright, colourful pixels that aren't skin are lifted up to `1 + --pop` times. Warm hues (skin, lips, hair) don't get the lift. On a cartoon avatar with a pale blue background, this gave a background of about 1,500 nits, a face of 160 nits, and sparkles near 1,900 nits. In a test upload to X, that version kept HDR, but the background clipped to plain white on an iPhone. It needs 8× headroom, more than the X app gave. `--pop 3 --white 1200 --sat 1.6` puts the background near 760 nits (about 4× headroom) and keeps it blue. `--sat` adds colour only where the pop applies.
 
 Pale backgrounds lose their colour when pushed bright, because all three channels hit the display limit together. `--bg 00d47a --bg-nits 800` finds the flat background (the area joined to the image border that is close to the border colour). It repaints that area in a saturated colour, keeps its shading and white sparkles, and sets its brightest channel to `--bg-nits`. A saturated colour stays that colour when it is bright. Green gives the most visible glow, since blue adds little luminance. The script also writes `_16bit.png` (full-precision PQ), `_sdr.png` and `_preview.png` (original next to a nits heat map).
+
+## Example: vertical illustrated animation
+A 90 s, 720x1280 animation of white cranes over teal water, golden reeds and an orange cloud (SDR median 0.42). The white cranes take up well under 1% of the frame, so they make good small highlights. This curve deepens the teal water and lifts the top end:
+```bash
+CURVE="0/0 0.1/0.035 0.3/0.14 0.55/0.38 0.75/0.82 1/1" bash grade_hlg.sh in.mp4 out.mp4
+```
+Result: 1080x1920, median 0.54, 8.5% above 0.75, 0.6% above 0.9 (the cranes and their reflections).
