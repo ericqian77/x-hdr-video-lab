@@ -18,7 +18,7 @@ import struct
 import zlib
 
 import numpy as np
-from PIL import Image
+from PIL import Image, ImageFilter
 
 SDR_WHITE = 203.0
 
@@ -191,6 +191,40 @@ def circle_crop(img, cx, cy, r):
     return Image.fromarray(a[sy, sx].astype(np.uint8))
 
 
+def background_mask(srgb, tol=0.12):
+    """Soft mask (0..1) of the flat background: pixels near the border colour that connect to the border."""
+    rim = np.concatenate([srgb[0], srgb[-1], srgb[:, 0], srgb[:, -1]])
+    ref = np.median(rim, 0)
+    near = np.linalg.norm(srgb - ref, axis=-1) < tol
+    seed = np.zeros_like(near); seed[0] = seed[-1] = seed[:, 0] = seed[:, -1] = True
+    m = seed & near
+    while True:                                   # grow inside `near`, 4-connected
+        g = m.copy(); g[1:] |= m[:-1]; g[:-1] |= m[1:]; g[:, 1:] |= m[:, :-1]; g[:, :-1] |= m[:, 1:]
+        g &= near
+        if (g == m).all():
+            break
+        m = g
+    img = Image.fromarray((m * 255).astype(np.uint8))
+    img = img.filter(ImageFilter.MaxFilter(5)).filter(ImageFilter.MinFilter(5))   # close sparkle holes
+    img = img.filter(ImageFilter.MaxFilter(3)).filter(ImageFilter.GaussianBlur(1.0))  # cover the old fringe, feather
+    return np.asarray(img).astype(np.float32) / 255, ref
+
+
+def recolour_background(srgb, mask, ref, colour, peak_nits, white_nits):
+    """Background nits in a new saturated colour; keeps the old shading and white sparkles."""
+    lin = srgb_to_linear(srgb) @ M709_TO_2020.T
+    w = np.array([0.2627, 0.6780, 0.0593])
+    Y = lin @ w
+    Yref = (srgb_to_linear(ref) @ M709_TO_2020.T) @ w
+    shade = np.clip(Y / Yref, 0.6, 1.2)
+    sparkle = smoothstep(0.04, 0.25, Y - Yref)
+    c = srgb_to_linear(np.array(colour) / 255) @ M709_TO_2020.T
+    c = c / c.max() * peak_nits                   # brightest channel of the new colour at peak_nits
+    bg = c * shade[..., None]
+    bg = bg + (np.full(3, white_nits) - bg) * sparkle[..., None]
+    return bg
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument('src'); ap.add_argument('out')
@@ -199,6 +233,8 @@ def main():
     ap.add_argument('--white', type=float, default=2000)
     ap.add_argument('--pop', type=float, default=7.0)
     ap.add_argument('--sat', type=float, default=1.0, help='colour boost in popped areas')
+    ap.add_argument('--bg', help='replace the flat background with this colour, e.g. 00c878')
+    ap.add_argument('--bg-nits', type=float, default=800, help='brightest channel of the new background')
     a = ap.parse_args()
 
     img = Image.open(a.src).convert('RGB')
@@ -214,6 +250,13 @@ def main():
     srgb = linear_to_srgb(np.clip(lin, 0, 1))
 
     nits, lum = grade(srgb, a.base, a.white, a.pop, a.sat)
+    if a.bg:
+        mask, ref = background_mask(srgb)
+        colour = [int(a.bg.lstrip('#')[i:i + 2], 16) for i in (0, 2, 4)]
+        bg = recolour_background(srgb, mask, ref, colour, a.bg_nits, a.white)
+        nits = nits * (1 - mask[..., None]) + bg * mask[..., None]
+        sdr_bg = linear_to_srgb(np.clip((bg @ np.linalg.inv(M709_TO_2020).T) / a.bg_nits, 0, 1))
+        img = Image.fromarray(np.round(255 * (srgb * (1 - mask[..., None]) + sdr_bg * mask[..., None])).astype(np.uint8))
     pq = pq_encode(nits)
     codes8 = np.round(pq * 255).astype(np.uint8)
 
