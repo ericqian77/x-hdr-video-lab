@@ -66,7 +66,7 @@ def skin_weight(rgb):
     return warm
 
 
-def grade(srgb, base_gain=1.4, white_nits=2000.0, pop=7.0):
+def grade(srgb, base_gain=1.4, white_nits=2000.0, pop=7.0, sat=1.0):
     lin709 = srgb_to_linear(srgb)
     lin = lin709 @ M709_TO_2020.T                         # linear BT.2020, SDR white = 1
     Y = lin @ np.array([0.2627, 0.6780, 0.0593])
@@ -80,6 +80,9 @@ def grade(srgb, base_gain=1.4, white_nits=2000.0, pop=7.0):
     w = smoothstep(0.25, 0.50, Y) * smoothstep(0.02, 0.10, colourful) * (1 - skin)
     pop_gain = 1 + pop * w
     gain = base_gain * np.maximum(hl_gain, pop_gain)
+    # extra colour in the popped areas, so a brightened pale colour stays that colour
+    s_ = 1 + (sat - 1) * w
+    lin = np.maximum(Y[..., None] + (lin - Y[..., None]) * s_[..., None], 0)
     nits = lin * SDR_WHITE * gain[..., None]
     return nits, Y * SDR_WHITE * gain
 
@@ -195,6 +198,7 @@ def main():
     ap.add_argument('--base', type=float, default=1.4)
     ap.add_argument('--white', type=float, default=2000)
     ap.add_argument('--pop', type=float, default=7.0)
+    ap.add_argument('--sat', type=float, default=1.0, help='colour boost in popped areas')
     a = ap.parse_args()
 
     img = Image.open(a.src).convert('RGB')
@@ -209,7 +213,7 @@ def main():
                     for c in range(3)], -1)
     srgb = linear_to_srgb(np.clip(lin, 0, 1))
 
-    nits, lum = grade(srgb, a.base, a.white, a.pop)
+    nits, lum = grade(srgb, a.base, a.white, a.pop, a.sat)
     pq = pq_encode(nits)
     codes8 = np.round(pq * 255).astype(np.uint8)
 
