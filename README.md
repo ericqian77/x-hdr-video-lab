@@ -27,7 +27,15 @@ python3 ystat.py out.mp4
 python3 still_to_motion.py poster.jpg sdr.mp4            # 1080 wide, height follows the image
 SIZE=1080:1620 PRE="eq=brightness=0.03," CURVE="0/0 0.32/0.28 0.55/0.60 0.78/0.82 1/1" bash grade_hlg.sh sdr.mp4 hdr.mp4
 ```
-Options: `--seconds`, `--fps`, `--bloom`, `--sweep`, `--sweep-box x0,y0,x1,y1`, `--sparkles N`, `--frames 0,60` (save PNG previews instead of encoding).
+To make the subject float off the background, give it a matte. The subject then moves on its own layer (the hole behind it is filled), gets a pulsing rim light, and snow falls both behind and in front of it:
+```bash
+pip install "rembg[cpu]" && rembg i -om poster.png mask.png      # white = subject
+python3 still_to_motion.py poster.png sdr.mp4 --mask mask.png --snow 500 --rays 0.6,0
+SIZE=1080:1620 PRE="eq=brightness=0.03," CURVE="0/0 0.25/0.24 0.5/0.57 0.7/0.81 0.85/0.95 1/1" bash grade_hlg.sh sdr.mp4 hdr.mp4
+```
+The last curve keeps a night scene's darks and pushes the top end harder; on a dark snowy poster (SDR median 0.25) it gave median 0.50, 15% above 0.75.
+
+Options: `--seconds`, `--fps`, `--bloom`, `--sweep`, `--sweep-box x0,y0,x1,y1`, `--sparkles N`, `--snow N`, `--rays x,y`, `--emissive`, `--mask`, `--float`, `--rim`, `--bg-dim`, `--frames 0,60` (save PNG previews instead of encoding).
 On a 1024x1536 cafe poster this graded to median 0.56, 27% above 0.75 with the brighter preset (0.45 / 21% with the default curve).
 
 Needs ffmpeg built with zscale (libzimg), and Python with numpy.
