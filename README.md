@@ -19,6 +19,17 @@ PRE="eq=brightness=0.03," CURVE="0/0 0.32/0.28 0.55/0.60 0.78/0.82 1/1" bash gra
 ffprobe -v error -select_streams v:0 -show_entries stream=color_space,color_transfer,color_primaries -of default=nw=1 out.mp4
 python3 ystat.py out.mp4
 ```
+`SIZE` sets the output size (default `1920:1080`); set it to match portrait clips, e.g. `SIZE=1080:1620`.
+
+### From a still image
+`still_to_motion.py` turns a still (poster, AI image) into an 8 s seamless loop made for HDR pop: a slow orbit camera (push-in, roll, float), pulsing bloom with white-hot cores on lamps and windows, a gloss sweep over lettering and bright rims (skin is left alone), and small cool-white sparkles.
+```bash
+python3 still_to_motion.py poster.jpg sdr.mp4            # 1080 wide, height follows the image
+SIZE=1080:1620 PRE="eq=brightness=0.03," CURVE="0/0 0.32/0.28 0.55/0.60 0.78/0.82 1/1" bash grade_hlg.sh sdr.mp4 hdr.mp4
+```
+Options: `--seconds`, `--fps`, `--bloom`, `--sweep`, `--sweep-box x0,y0,x1,y1`, `--sparkles N`, `--frames 0,60` (save PNG previews instead of encoding).
+On a 1024x1536 cafe poster this graded to median 0.56, 27% above 0.75 with the brighter preset (0.45 / 21% with the default curve).
+
 Needs ffmpeg built with zscale (libzimg), and Python with numpy.
 
 A result that looked good: median luma about 0.54, about 24% of pixels above 0.75. A median under 0.4 looked too dark. Avoid crushing the mids (like `0.45/0.08`).
