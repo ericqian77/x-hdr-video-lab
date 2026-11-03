@@ -8,7 +8,7 @@ Effects (all composed in linear light):
   * glow on coloured light sources (lanterns, glowing charms)
   * a glossy light sweep across bright lettering and rims (skin is left alone)
   * small cool-white sparkles / dust motes with a few star glints
-  * optional: falling snow at several depths, animated light rays
+  * optional: sparse snow drifting down and up at several depths, animated light rays
   * optional, with --mask: the subject is cut out and floats on its own layer in
     front of the background, with a pulsing rim light, so it lifts off the frame
 
@@ -17,7 +17,7 @@ iPhone, so the effects add exactly that instead of lifting the whole image.
 
 Usage:
   python3 still_to_motion.py in.jpg sdr.mp4 [--seconds 8] [--fps 30] [--width 1080]
-  python3 still_to_motion.py in.png sdr.mp4 --mask subject_mask.png --snow 500 --rays 0.6,0
+  python3 still_to_motion.py in.png sdr.mp4 --mask subject_mask.png --snow 60 --sparkles 30 --rays 0.6,0
   SIZE=1080:1620 PRE="eq=brightness=0.02," bash grade_hlg.sh sdr.mp4 hdr.mp4
 
 The mask is a greyscale image the size of the source, white = subject (for example
@@ -154,35 +154,42 @@ def splat(out, x, y, s, amp, col, rad, star=False, tw=1.0):
 
 
 class Snow:
-    """Falling snow at several depths. Far flakes are small, sharp and slow; near
-    flakes are big, soft and fast. Each flake crosses the frame a whole number of
-    times per loop, so the clip still loops."""
+    """Sparse snow drifting at several depths. Each flake fades in, drifts a short way
+    (most fall, some float up) and fades out again, once per loop, so the clip still
+    loops and the frame never fills with noise. Far flakes are small and sharp; near
+    flakes are big and soft."""
 
-    def __init__(self, w, h, n, seed=11):
+    def __init__(self, w, h, n, rise=0.3, seed=11):
         rng = np.random.default_rng(seed)
         self.w, self.h, self.n = w, h, n
-        self.depth = rng.random(n) ** 1.8          # mostly far flakes
-        self.u = rng.uniform(-0.05, 1.05, n)
-        self.v = rng.uniform(0, 1, n)
-        self.laps = 1 + np.floor(self.depth * 3).astype(int)
-        self.slant = rng.uniform(0.04, 0.12, n) * (0.5 + self.depth)
-        self.wob_k = rng.integers(1, 4, n)
-        self.wob_a = rng.uniform(0.003, 0.012, n) * (0.5 + self.depth)
+        self.depth = rng.random(n) ** 1.6          # mostly far flakes
+        self.u = rng.uniform(0.02, 0.98, n)
+        self.y0 = rng.uniform(0.05, 0.95, n)
+        self.v = rng.uniform(0, 1, n)              # where in its life each flake starts
+        self.dir = np.where(rng.random(n) < rise, -1.0, 1.0)
+        self.travel = rng.uniform(0.18, 0.4, n) * (0.6 + 0.8 * self.depth) * np.where(self.dir < 0, 0.6, 1.0)
+        self.slant = rng.uniform(-0.04, 0.08, n)
+        self.wob_k = rng.integers(1, 3, n)
+        self.wob_a = rng.uniform(0.006, 0.02, n) * (0.6 + self.depth)
         self.ph = rng.uniform(0, 2 * math.pi, n)
         sc = w / 1080
-        self.size = (0.7 + 7.0 * self.depth ** 2.2) * sc * rng.uniform(0.8, 1.25, n)
-        self.gain = (0.55 + 0.6 * rng.random(n)) * (1.0 - 0.55 * self.depth ** 1.5)
+        self.size = (0.8 + 6.0 * self.depth ** 2.2) * sc * rng.uniform(0.8, 1.25, n)
+        self.gain = (0.9 + 0.9 * rng.random(n)) * (1.0 - 0.6 * self.depth ** 1.5)
 
     def render(self, far, near, phase, split=0.55):
         t = phase / (2 * math.pi)
         for i in range(self.n):
-            p = (self.v[i] + self.laps[i] * t) % 1.0
-            y = (-0.06 + 1.12 * p) * self.h
-            x = (self.u[i] - self.slant[i] * p + self.wob_a[i] * math.sin(self.wob_k[i] * phase + self.ph[i])) * self.w
+            p = (self.v[i] + t) % 1.0
+            fade = math.sin(math.pi * p) ** 1.5
+            if fade < 0.02:
+                continue
+            q = p - 0.5
+            y = (self.y0[i] + self.dir[i] * self.travel[i] * q) * self.h
+            x = (self.u[i] + self.slant[i] * q
+                 + self.wob_a[i] * math.sin(self.wob_k[i] * phase + self.ph[i])) * self.w
             s = self.size[i]
-            tw = 0.75 + 0.25 * math.sin(3 * phase + self.ph[i] * 2)
             target = near if self.depth[i] > split else far
-            splat(target, x, y, s, self.gain[i] * tw, COOL, int(math.ceil(s * 3)))
+            splat(target, x, y, s, self.gain[i] * fade, COOL, int(math.ceil(s * 3)))
 
 
 def main():
@@ -200,7 +207,8 @@ def main():
     ap.add_argument("--sweep-box", type=str, default="0,0,1,1",
                     help="x0,y0,x1,y1 (0-1) limiting the sweep, e.g. to a title")
     ap.add_argument("--sparkles", type=int, default=90, help="number of sparkles (0 = off)")
-    ap.add_argument("--snow", type=int, default=0, help="number of snowflakes (0 = off)")
+    ap.add_argument("--snow", type=int, default=0, help="number of snowflakes (0 = off); ~60 reads as sparse")
+    ap.add_argument("--snow-rise", type=float, default=0.3, help="fraction of flakes that float up instead of falling")
     ap.add_argument("--rays", type=str, default="", help="x,y (0-1) of a light source to cast moving rays from")
     ap.add_argument("--rays-strength", type=float, default=1.0)
     ap.add_argument("--mask", type=str, default="", help="greyscale subject matte; makes the subject float")
@@ -220,7 +228,7 @@ def main():
     bw, bh = big.size
     N = int(round(a.seconds * a.fps))
     sparkles = Sparkles(W, H, a.sparkles) if a.sparkles else None
-    snow = Snow(W, H, a.snow) if a.snow else None
+    snow = Snow(W, H, a.snow, rise=a.snow_rise) if a.snow else None
     debug = {int(x) for x in a.frames.split(",") if x}
 
     layered = bool(a.mask)
