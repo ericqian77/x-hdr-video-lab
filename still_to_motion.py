@@ -19,6 +19,9 @@ Usage:
   python3 still_to_motion.py in.jpg sdr.mp4 [--seconds 8] [--fps 30] [--width 1080]
   python3 still_to_motion.py in.png sdr.mp4 --mask subject_mask.png --snow 60 --sparkles 30 --rays 0.6,0
   SIZE=1080:1620 PRE="eq=brightness=0.02," bash grade_hlg.sh sdr.mp4 hdr.mp4
+  # stronger HDR contrast: keep the picture at reference white, only lights hit peak
+  python3 still_to_motion.py in.png sdr.mp4 --mask m.png --headroom 0.3 --exposure 0.8 ...
+  SIZE=1080:1620 CURVE="0/0 1/1" bash grade_hlg.sh sdr.mp4 hdr.mp4
 
 The mask is a greyscale image the size of the source, white = subject (for example
 `rembg i -om in.png mask.png`). Needs numpy, Pillow and ffmpeg.
@@ -217,6 +220,12 @@ def main():
     ap.add_argument("--rim", type=float, default=1.0, help="rim light on the subject (with --mask)")
     ap.add_argument("--bg-dim", type=float, default=0.85, help="background exposure under the subject layer (with --mask)")
     ap.add_argument("--lift", type=float, default=1.0, help="subject exposure (with --mask)")
+    ap.add_argument("--headroom", type=float, default=1.0,
+                    help="cap for the base image's whites in linear light (<1 = HDR headroom mode). After a neutral "
+                         "HLG grade, SDR ~0.53 (linear ~0.25) lands on reference white, so ~0.3 keeps titles, cloth "
+                         "and skin at normal white and leaves the range above to light sources, rim, snow and glints")
+    ap.add_argument("--exposure", type=float, default=1.0, help="shadow/midtone gain under the headroom shoulder")
+    ap.add_argument("--contrast", type=float, default=1.0, help="power on the base image in linear light (>1 = deeper darks)")
     ap.add_argument("--frames", type=str, default="", help="debug: comma list of frame indices to save as PNG")
     a = ap.parse_args()
 
@@ -319,6 +328,12 @@ def main():
             alpha_f = alpha_f[..., 0]
 
         srgb = lin_to_srgb(lin)
+        hr = a.headroom < 1.0
+        lin0 = lin
+        if hr or a.contrast != 1.0:
+            x = np.power(np.clip(lin, 0, 1), a.contrast)
+            # soft shoulder: shadows and mids keep their level, whites roll off towards the cap
+            lin = a.exposure * x / (1 + a.exposure * x / a.headroom) if hr else x
         Ls = srgb @ LUMA
         mx, mn = srgb.max(2), srgb.min(2)
         sat = (mx - mn) / (mx + 1e-4)
@@ -328,21 +343,35 @@ def main():
         # ---- bloom + white-hot cores on the brightest areas ----
         # skin and warm mids are saturated; light sources and white surfaces are not
         neutral = 1 - smoothstep(0.22, 0.5, sat)
-        hl = smoothstep(0.78, 0.97, Ls) * (0.35 + 0.65 * neutral)
+        hl = smoothstep(0.86, 0.99, Ls) if hr else smoothstep(0.78, 0.97, Ls)
+        hl = hl * (0.35 + 0.65 * neutral)
         if layered:
-            hl = hl * (1 - 0.7 * alpha_f)
+            hl = hl * (1 - (0.85 if hr else 0.7) * alpha_f)
         # coloured light sources: bright and saturated, but not skin-coloured
         skin = smoothstep(0.76, 0.8, gr) * (1 - smoothstep(0.88, 0.92, gr))
         emis = smoothstep(0.62, 0.92, mx) * smoothstep(0.2, 0.45, sat) * (bgw if layered else 1 - skin)
-        src_l = lin * (hl + a.emissive * 0.9 * emis)[..., None]
+        src_l = lin0 * (hl + a.emissive * 0.9 * emis)[..., None]
         small = resize_f(src_l.astype(np.float32), sw, sh)
-        glow = 0.45 * gauss_blur(small, 2) + 0.3 * gauss_blur(small, 8) + 0.15 * gauss_blur(small, 22)
+        if hr:
+            # tight halo only: a wide glow lifts the darks around every light and reads as fog
+            glow = 0.5 * gauss_blur(small, 1.5) + 0.25 * gauss_blur(small, 6)
+        else:
+            glow = 0.45 * gauss_blur(small, 2) + 0.3 * gauss_blur(small, 8) + 0.15 * gauss_blur(small, 22)
         glow = resize_f(glow, W, H)
-        core = (hl * neutral) ** 2 + a.emissive * 0.6 * emis ** 2
+        if hr:
+            core = 1.6 * hl * neutral + a.emissive * 1.3 * emis
+        else:
+            core = (hl * neutral) ** 2 + a.emissive * 0.6 * emis ** 2
         core = np.clip(core, 0, 1)
-        lin = lin + core[..., None] * (1.0 - lin) * (0.2 + 0.3 * pulse)
-        lin = lin * (1 + core[..., None] * (0.3 + 0.5 * pulse) * flick)
-        lin = lin + glow * a.bloom * (0.25 + 0.35 * pulse) * flick
+        if hr:
+            # light sources go to peak in their own colour (a cyan charm stays cyan)
+            target = lin0 / np.maximum(lin0.max(2, keepdims=True), 1e-3)
+            lin = lin + core[..., None] * (target - lin) * (0.75 + 0.25 * pulse) * flick
+            lin = lin + glow * a.bloom * 0.8 * (0.4 + 0.6 * pulse) * flick
+        else:
+            lin = lin + core[..., None] * (1.0 - lin) * (0.2 + 0.3 * pulse)
+            lin = lin * (1 + core[..., None] * (0.3 + 0.5 * pulse) * flick)
+            lin = lin + glow * a.bloom * (0.25 + 0.35 * pulse) * flick
 
         # ---- moving light rays (behind the subject) ----
         if a.rays:
@@ -351,6 +380,8 @@ def main():
                 amp = 0.6 + 0.4 * math.sin((i % 3 + 1) * ph + ray_p[i])
                 beams += amp * (0.5 + 0.5 * np.cos(ray_f[i] * ray_th + ray_p[i] + ray_k[i] * ph)) ** 6
             rays = a.rays_strength * 0.12 * beams / 3 * ray_fall * (0.8 + 0.2 * pulse)
+            if hr:
+                rays = rays * a.headroom   # rays are scene light, not a highlight
             lin = lin + (rays * ((1 - 0.85 * alpha_f) if layered else 1.0))[..., None] * COOL
 
         # ---- glossy sweep across bright lettering and rims ----
@@ -373,17 +404,18 @@ def main():
 
         # ---- rim light: the subject's edge catches the light and lifts off the frame ----
         if layered and a.rim > 0:
-            lin = lin + (a.rim * 0.8 * rim_f * (0.55 + 0.45 * pulse))[..., None] * COOL
+            lin = lin + (a.rim * (0.45 if hr else 0.8) * rim_f * (0.55 + 0.45 * pulse))[..., None] * COOL
 
         # ---- snow and sparkles ----
         if snow is not None:
             far, near = np.zeros_like(lin), np.zeros_like(lin)
             snow.render(far, near, ph)
-            lin = lin + far * (bgw[..., None] if layered else 1.0) + near
+            gain = 1.5 if hr else 1.0   # flakes are point highlights: let them reach peak
+            lin = lin + gain * (far * (bgw[..., None] if layered else 1.0) + near)
         if sparkles is not None:
             add = np.zeros_like(lin)
             sparkles.render(add, ph)
-            lin = lin + add
+            lin = lin + add * (1.5 if hr else 1.0)
 
         out = (lin_to_srgb(lin) * 255 + 0.5).astype(np.uint8)
         if debug:

@@ -35,7 +35,15 @@ SIZE=1080:1620 PRE="eq=brightness=0.03," CURVE="0/0 0.25/0.24 0.5/0.57 0.7/0.81 
 ```
 The last curve keeps a night scene's darks and pushes the top end harder; on a dark snowy poster (SDR median 0.25) it gave median 0.50, 15% above 0.75.
 
-Options: `--seconds`, `--fps`, `--bloom`, `--sweep`, `--sweep-box x0,y0,x1,y1`, `--sparkles N`, `--snow N`, `--snow-rise 0.3`, `--rays x,y`, `--emissive`, `--mask`, `--float`, `--rim`, `--bg-dim`, `--frames 0,60` (save PNG previews instead of encoding).
+That version looked foggy and flat on an iPhone: the title, robe, face and hair all landed above reference white, so nothing stood out. With a neutral curve, SDR ~0.53 already maps to HLG ~0.76 (reference white) and everything brighter goes into HDR range. Headroom mode fixes it by capping the base image's whites with a soft shoulder, so only the effects (light sources in their own colour, rim, snow, title shine) reach peak. It also keeps the halos tight so the darks stay deep:
+```bash
+python3 still_to_motion.py poster.png sdr.mp4 --mask mask.png --snow 70 --sparkles 30 --rays 0.6,0 \
+  --headroom 0.3 --exposure 1.0 --contrast 1.1 --bg-dim 0.85
+SIZE=1080:1620 CURVE="0/0 1/1" bash grade_hlg.sh sdr.mp4 hdr.mp4
+```
+Same poster: median 0.35, 3% above 0.75, 0.6% above 0.9. The bright pixels are now the lanterns, charms, snow and rim, not the large surfaces.
+
+Options: `--seconds`, `--fps`, `--bloom`, `--sweep`, `--sweep-box x0,y0,x1,y1`, `--sparkles N`, `--snow N`, `--snow-rise 0.3`, `--rays x,y`, `--emissive`, `--mask`, `--float`, `--rim`, `--bg-dim`, `--headroom`, `--exposure`, `--contrast`, `--frames 0,60` (save PNG previews instead of encoding).
 On a 1024x1536 cafe poster this graded to median 0.56, 27% above 0.75 with the brighter preset (0.45 / 21% with the default curve).
 
 Needs ffmpeg built with zscale (libzimg), and Python with numpy.
